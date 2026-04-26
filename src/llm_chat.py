@@ -89,6 +89,32 @@ os.makedirs(TEAM_MEMBER_FOLDER, exist_ok=True)
 
 MAX_HISTORY_PER_USER = const.max_messages
 
+# 群聊：由 main 在加载 config 后调用 set_group_chat_config 写入
+# mode "reply" = 仅 @ 时记录并回复；"listen" = 全群记录，仅 @ 回复
+GROUP_MODE: str = "reply"
+CONTEXT_MESSAGE_NUM: int = 7
+
+
+def set_group_chat_config(mode: Optional[str] = None, message_num: Any = None) -> str:
+    """根据 config.json 设置群聊模式与注入上下文的条数。返回归一化后的 mode。"""
+    global GROUP_MODE, CONTEXT_MESSAGE_NUM
+    m = (mode or "reply").strip().lower()
+    if m not in ("reply", "listen"):
+        logger.warning(
+            f"config mode 无效 {mode!r}，仅支持 listen / reply，已使用 reply"
+        )
+        m = "reply"
+    GROUP_MODE = m
+    try:
+        n = int(message_num) if message_num is not None else 7
+        if n < 1:
+            n = 7
+    except (TypeError, ValueError):
+        n = 7
+    CONTEXT_MESSAGE_NUM = n
+    logger.info(f"群聊配置: mode={GROUP_MODE}，上下文联条数={CONTEXT_MESSAGE_NUM}")
+    return m
+
 
 class UserPreference(TypedDict):
     user_id: int
@@ -515,19 +541,27 @@ def _save_user_personality(user_id: int, personality_data: dict):
         logger.error(f"保存用户性格数据失败: {e}")
 
 
-def add_to_history(user_id: int, message: str, role: str = "user"):
+def add_to_history(
+    user_id: int,
+    message: str,
+    role: str = "user",
+    group_id: Optional[int] = None,
+):
     from datetime import datetime
 
     user_count = get_user_history_count(user_id)
     if user_count >= MAX_HISTORY_PER_USER:
         clear_user_history(user_id)
 
-    chat_history.append({
+    record: dict = {
         "user_id": user_id,
         "message": message,
         "role": role,
-        "timestamp": datetime.now().isoformat()
-    })
+        "timestamp": datetime.now().isoformat(),
+    }
+    if group_id is not None:
+        record["group_id"] = group_id
+    chat_history.append(record)
     save_chat_history()
 
 
@@ -569,6 +603,11 @@ def check_memory_request(text: str) -> Optional[str]:
 def get_user_recent_history(user_id: int, limit: int = 5) -> List[ChatMessage]:
     user_messages = [msg for msg in reversed(chat_history) if msg.get("user_id") == user_id]
     return user_messages[:limit]
+
+
+def get_group_recent_history(group_id: int, limit: int) -> List[ChatMessage]:
+    gmsgs = [msg for msg in reversed(chat_history) if msg.get("group_id") == group_id]
+    return gmsgs[:limit]
 
 
 def search_chat_history(query: str, user_id: Optional[int] = None, limit: int = 10) -> List[ChatMessage]:
@@ -885,10 +924,28 @@ async def context_node(state: AgentState) -> Dict[str, Any]:
         memory_saved = True
 
     recent_history: List[ChatMessage] = []
-    if user_id:
-        recent_history = get_user_recent_history(user_id, 7)
-
-    history_context = "\n".join([f"{msg['role']}: {msg['message']}" for msg in reversed(recent_history)])
+    lim = CONTEXT_MESSAGE_NUM
+    gid = state.get("group_id")
+    # 群聊：reply / listen 均取该群最近 N 条（多用户）；私聊仍按 user_id
+    if gid:
+        recent_history = get_group_recent_history(gid, lim)
+        history_context = "\n".join(
+            [
+                (
+                    f"用户{msg['user_id']}: {msg['message']}"
+                    if msg.get("role") == "user"
+                    else f"助手: {msg['message']}"
+                )
+                for msg in reversed(recent_history)
+            ]
+        )
+    elif user_id:
+        recent_history = get_user_recent_history(user_id, lim)
+        history_context = "\n".join(
+            [f"{msg['role']}: {msg['message']}" for msg in reversed(recent_history)]
+        )
+    else:
+        history_context = ""
 
     user_pref_info = ""
     if user_id:

@@ -11,6 +11,7 @@ from llm_chat import (
     parse_group_qby_command,
     enable_qby_mode,
     disable_qby_mode,
+    set_group_chat_config,
 )
 from check_activity_level import create_activity_checker
 import const
@@ -26,6 +27,10 @@ chat_group_ls = [int(x) for x in _bot_cfg["chat_group_ids"]]
 check_activity_level_group = [
     int(x) for x in _bot_cfg["check_activity_level_group_ids"]
 ]
+_group_mode = set_group_chat_config(
+    _bot_cfg.get("mode"),
+    _bot_cfg.get("message_num"),
+)
 """
 # 发送私聊消息
 await api.send_private_msg(user_id=12345678, message="你好")
@@ -140,73 +145,88 @@ async def handle_message(data: dict):
         if group_id in check_activity_level_group:
             global message_counter
             message_counter += 1
-        if group_id in chat_group_ls and '@3806541446' in message_content:
-            try:
-                clean_content = re.sub(r"^@3806541446\s*", "", message_content).strip()
-                qby_cmd = parse_group_qby_command(clean_content)
-                if qby_cmd:
-                    if qby_cmd == "on":
-                        changed = enable_qby_mode()
-                        result = {
-                            "response": (
-                                "QBY 模式已开启。"
-                                if changed
-                                else "已经在 QBY 模式。关闭请发：@机器人 /qby quit"
-                            )
-                        }
-                    else:
-                        was_on = disable_qby_mode()
-                        result = {
-                            "response": (
-                                "QBY 模式已关闭。"
-                                if was_on
-                                else "当前不在 QBY 模式。开启请发：@机器人 /qby"
-                            )
-                        }
-                    if result["response"]:
-                        await api.send_group_msg(group_id=group_id, message=result["response"])
-                    add_to_history(user_id, clean_content, "user")
-                    add_to_history(user_id, result["response"], "assistant")
-                    return
-                # 发送更新日志
-                if clean_content == '/log':
-                    update_data = ''
-                    for update_time in update_log.keys():
-                        update_data += f'更新时间：{update_log[update_time].get('time')}\n更新内容：{update_log[update_time].get('content')}\n'
-
-                    result = {'response': update_data}
+        if group_id not in chat_group_ls:
+            return
+        at_bot = '@3806541446' in message_content
+        if _group_mode == "listen" and not at_bot:
+            add_to_history(user_id, message_content, "user", group_id=group_id)
+            return
+        if not at_bot:
+            return
+        try:
+            clean_content = re.sub(r"^@3806541446\s*", "", message_content).strip()
+            qby_cmd = parse_group_qby_command(clean_content)
+            if qby_cmd:
+                if qby_cmd == "on":
+                    changed = enable_qby_mode()
+                    result = {
+                        "response": (
+                            "QBY 模式已开启。"
+                            if changed
+                            else "已经在 QBY 模式。关闭请发：@机器人 /qby quit"
+                        )
+                    }
                 else:
-                    # LLM处理
-                    result = await chat_agent(clean_content, user_id=user_id, group_id=group_id)
-
-                # 发送文本回复
+                    was_on = disable_qby_mode()
+                    result = {
+                        "response": (
+                            "QBY 模式已关闭。"
+                            if was_on
+                            else "当前不在 QBY 模式。开启请发：@机器人 /qby"
+                        )
+                    }
                 if result["response"]:
                     await api.send_group_msg(group_id=group_id, message=result["response"])
+                add_to_history(
+                    user_id, clean_content, "user", group_id=group_id
+                )
+                add_to_history(
+                    user_id, result["response"], "assistant", group_id=group_id
+                )
+                return
+            # 发送更新日志
+            if clean_content == '/log':
+                update_data = ''
+                for update_time in update_log.keys():
+                    update_data += f'更新时间：{update_log[update_time].get('time')}\n更新内容：{update_log[update_time].get('content')}\n'
 
-                # 发送Pixiv图片
-                if result.get("pixiv_images"):
-                    for img_path in result["pixiv_images"]:
-                        try:
-                            # 转换为绝对路径
-                            abs_path = os.path.abspath(img_path)
-                            logger.info(f"发送Pixiv图片，绝对路径: {abs_path}")
-                            img_msg = [MessageSegment.image(file=abs_path)]
-                            await api.send_group_msg(group_id=group_id, message=img_msg)
-                        except Exception as e:
-                            logger.error(f"发送Pixiv图片失败: {e}")
+                result = {'response': update_data}
+            else:
+                # LLM处理
+                result = await chat_agent(clean_content, user_id=user_id, group_id=group_id)
 
-                # 发送表情包（30%概率）
-                if result["emoji_path"]:
-                    emoji_msg = [MessageSegment.image(file=result["emoji_path"])]
-                    await api.send_group_msg(group_id=group_id, message=emoji_msg)
+            # 发送文本回复
+            if result["response"]:
+                await api.send_group_msg(group_id=group_id, message=result["response"])
 
-                # 记录历史
-                add_to_history(user_id, clean_content, "user")
-                if result["response"]:
-                    add_to_history(user_id, result["response"], "assistant")
+            # 发送Pixiv图片
+            if result.get("pixiv_images"):
+                for img_path in result["pixiv_images"]:
+                    try:
+                        # 转换为绝对路径
+                        abs_path = os.path.abspath(img_path)
+                        logger.info(f"发送Pixiv图片，绝对路径: {abs_path}")
+                        img_msg = [MessageSegment.image(file=abs_path)]
+                        await api.send_group_msg(group_id=group_id, message=img_msg)
+                    except Exception as e:
+                        logger.error(f"发送Pixiv图片失败: {e}")
 
-            except Exception as e:
-                logger.error(e)
+            # 发送表情包（30%概率）
+            if result["emoji_path"]:
+                emoji_msg = [MessageSegment.image(file=result["emoji_path"])]
+                await api.send_group_msg(group_id=group_id, message=emoji_msg)
+
+            # 记录历史
+            add_to_history(
+                user_id, clean_content, "user", group_id=group_id
+            )
+            if result["response"]:
+                add_to_history(
+                    user_id, result["response"], "assistant", group_id=group_id
+                )
+
+        except Exception as e:
+            logger.error(e)
 
 
 def parse_message(message) -> str:
