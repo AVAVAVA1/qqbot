@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 秘钥与本地配置（用 .env.example、config_example.json 作为模板）
+.env
+**/.env
+src/config.json
+src/cookie.json
+
+# 运行时或用户数据
+data/
+pic/
+source/
+project.md
+# team_member：仅保留 qby.md 入库，其它成员/本地说明忽略
+team_member/*
+!team_member/qby.md
+
+# 编辑器/系统
+.idea/
+.vscode/
+*.swp
+*~
+Thumbs.db
+.DS_Store
