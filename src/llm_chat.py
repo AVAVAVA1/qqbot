@@ -830,6 +830,8 @@ def update_user_topic_preference(user_id: int, topics: List[str]):
 
 class AgentState(TypedDict):
     user_input: str
+    user_input_for_llm: str
+    pixiv_command: bool
     user_id: Optional[int]
     group_id: Optional[int]
     final_response: str
@@ -848,14 +850,23 @@ class AgentState(TypedDict):
     pixiv_request: Optional[Dict[str, Any]]
 
 
-def parse_pixiv_request(user_input: str) -> Optional[dict]:
-    """解析用户对 Pixiv 图片的请求"""
-    pixiv_keywords = ["pixiv", "p站", "P站", "Pixiv", "PIXIV"]
-    has_pixiv_keyword = any(kw in user_input for kw in pixiv_keywords)
+def parse_pixiv_command(user_input: str) -> tuple[bool, str]:
+    """仅当消息以 /pixiv 开头时视为 Pixiv 命令；返回 (是否命令, 命令后的正文)。"""
+    s = user_input.strip()
+    m = re.match(r"^/pixiv(?:\s+(.*))?$", s, re.IGNORECASE)
+    if not m:
+        return False, user_input
+    rest = (m.group(1) or "").strip()
+    return True, rest
 
-    if not has_pixiv_keyword:
+
+def parse_pixiv_request_body(body: str) -> Optional[dict]:
+    """解析 /pixiv 后正文中的下载参数（不依赖“p站”等关键词，避免与闲聊/联网分析混淆）。"""
+    user_input = body.strip()
+    if not user_input:
         return None
 
+    pixiv_keywords = ["pixiv", "p站", "P站", "Pixiv", "PIXIV"]
     result = {"mode": None, "page_url": None, "pic_num": 2}
 
     rank_patterns = [
@@ -909,13 +920,22 @@ def parse_pixiv_request(user_input: str) -> Optional[dict]:
                     result["pic_num"] = min(int(num_match.group(1)), 10)
                 return result
 
-    return None
+    # 无特定模式时，将整段正文作为标签搜图
+    result["mode"] = 2
+    result["page_url"] = user_input
+    num_match = re.search(r"(\d+)\s*张", user_input)
+    if num_match:
+        result["pic_num"] = min(int(num_match.group(1)), 10)
+    return result
 
 
 async def context_node(state: AgentState) -> Dict[str, Any]:
-    """加载会话上下文、永久记忆写入、解析 Pixiv 请求（不下载）。"""
+    """加载会话上下文、永久记忆写入、解析 /pixiv 命令与下载参数（不下载）。"""
     user_input = state["user_input"]
     user_id = state.get("user_id")
+    pixiv_cmd, pixiv_body = parse_pixiv_command(user_input)
+    user_input_for_llm = pixiv_body if pixiv_cmd else user_input
+    pixiv_request = parse_pixiv_request_body(pixiv_body) if pixiv_cmd else None
 
     memory_saved = False
     memory_content: Optional[str] = check_memory_request(user_input)
@@ -965,15 +985,16 @@ async def context_node(state: AgentState) -> Dict[str, Any]:
         "history_context": history_context,
         "user_pref_info": user_pref_info,
         "permanent_memory_str": permanent_memory_str,
-        "pixiv_request": parse_pixiv_request(user_input),
+        "user_input_for_llm": user_input_for_llm,
+        "pixiv_command": pixiv_cmd,
+        "pixiv_request": pixiv_request,
     }
 
 
 async def pixiv_node(state: AgentState) -> Dict[str, Any]:
-    """如有 Pixiv 请求则下载；成功时直接生成简短 final_response。"""
+    """如有 /pixiv 解析出的下载任务则执行下载；回复文案由后续 generate 生成。"""
     pixiv_request = state.get("pixiv_request")
     pixiv_images: List[str] = []
-    final_response = ""
 
     if pixiv_request:
         try:
@@ -995,20 +1016,23 @@ async def pixiv_node(state: AgentState) -> Dict[str, Any]:
             pixiv_images = []
 
     if pixiv_images:
-        final_response = f"已经为你找到了 {len(pixiv_images)} 张图片喵~"
         logger.info(f"Pixiv图片路径: {pixiv_images}")
 
-    return {"pixiv_images": pixiv_images, "final_response": final_response}
-
-
-def route_after_pixiv(state: AgentState) -> str:
-    """有图则跳过后续搜索与生成，直接去收尾（与原逻辑一致）。"""
-    return "finalize" if state.get("pixiv_images") else "search_plan"
+    return {"pixiv_images": pixiv_images}
 
 
 async def search_plan_node(state: AgentState) -> Dict[str, Any]:
-    """LLM 决定是否需要联网搜索及查询参数。"""
-    search_params = await analyze_search_need(state["user_input"])
+    """LLM 决定是否需要联网搜索及查询参数。/pixiv 命令不触发联网，与下载分流。"""
+    user_text = state.get("user_input_for_llm") or state["user_input"]
+    if state.get("pixiv_command"):
+        search_params: SearchParams = {
+            "need_search": False,
+            "query": user_text,
+            "max_results": 7,
+            "time_range": "week",
+        }
+    else:
+        search_params = await analyze_search_need(user_text)
     logger.info(
         f"搜索分析结果: need_search={search_params['need_search']}, query={search_params['query']}, "
         f"max_results={search_params['max_results']}, time_range={search_params['time_range']}"
@@ -1045,7 +1069,12 @@ async def tavily_node(state: AgentState) -> Dict[str, Any]:
 
 async def generate_node(state: AgentState) -> Dict[str, Any]:
     """组装提示词并调用 LLM（含 QBY skill 与审核降级）。"""
-    user_input = state["user_input"]
+    user_input = state.get("user_input_for_llm") or state["user_input"]
+    pixiv_imgs = state.get("pixiv_images") or []
+    if pixiv_imgs:
+        user_input = (
+            f"{user_input}\n\n[系统：已准备好 {len(pixiv_imgs)} 张 Pixiv 配图，图片将随本回复一起发送。]"
+        )
     user_id = state.get("user_id")
     web_results = state.get("web_results") or "无需搜索"
     history_context = state.get("history_context") or ""
@@ -1138,7 +1167,7 @@ async def generate_node(state: AgentState) -> Dict[str, Any]:
 
 async def finalize_node(state: AgentState) -> Dict[str, Any]:
     """表情与话题偏好（与原 chat_node 尾部一致）。"""
-    user_input = state["user_input"]
+    user_input = state.get("user_input_for_llm") or state["user_input"]
     user_id = state.get("user_id")
 
     emoji_path: Optional[str] = None
@@ -1187,11 +1216,7 @@ def build_graph():
 
     graph.set_entry_point("context")
     graph.add_edge("context", "pixiv")
-    graph.add_conditional_edges(
-        "pixiv",
-        route_after_pixiv,
-        {"finalize": "finalize", "search_plan": "search_plan"},
-    )
+    graph.add_edge("pixiv", "search_plan")
     graph.add_conditional_edges(
         "search_plan",
         route_need_search,
@@ -1213,6 +1238,8 @@ async def chat_agent(
 ) -> dict:
     initial_state: AgentState = {
         "user_input": user_input,
+        "user_input_for_llm": user_input,
+        "pixiv_command": False,
         "user_id": user_id,
         "group_id": group_id,
         "final_response": "",
