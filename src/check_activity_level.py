@@ -21,6 +21,11 @@ class ActivityChecker:
         self.get_message_counter: Optional[Callable] = None  # 获取消息计数器的函数
         self.reset_message_counter: Optional[Callable] = None  # 重置消息计数器的函数
         self.llm_chat_func: Optional[Callable] = None  # LLM聊天函数
+        self.bot_qq: Optional[int] = None  # 本机器人 QQ（暖场/晚安等场景的 user_id）
+
+    def set_bot_qq(self, qq: int):
+        """设置本机器人 QQ 号"""
+        self.bot_qq = int(qq)
 
     def set_api(self, api):
         """设置API客户端"""
@@ -104,8 +109,11 @@ class ActivityChecker:
 请直接输出你想说的话："""
 
         try:
+            if self.bot_qq is None:
+                logger.warning("bot_qq 未设置，跳过暖场 LLM")
+                return
             # 调用LLM生成暖场话语
-            result = await self.llm_chat_func(warm_up_prompt, user_id=3806541446)
+            result = await self.llm_chat_func(warm_up_prompt, user_id=self.bot_qq)
             warm_message = result.get("response", "怎么没人说话喵~")
 
             # 向所有配置的群组发送消息
@@ -127,6 +135,9 @@ class ActivityChecker:
             if not self.api or not self.llm_chat_func:
                 logger.warning("API或LLM函数未设置，无法发送晚安问候")
                 return 'remind resting skipped'
+            if self.bot_qq is None:
+                logger.warning("bot_qq 未设置，跳过晚安 LLM")
+                return 'remind resting skipped'
 
             # 构建提示词，让LLM生成晚安问候
             goodnight_prompt = """你是一只可爱的赛马娘，名字叫oguri。现在已经是深夜了（23:30），你要跟大家说晚安。
@@ -146,7 +157,7 @@ class ActivityChecker:
 请直接输出晚安问候："""
 
             # 调用LLM生成晚安问候
-            result = await self.llm_chat_func(goodnight_prompt, user_id=3806541446)
+            result = await self.llm_chat_func(goodnight_prompt, user_id=self.bot_qq)
             goodnight_message = result.get("response", "该休息了喵~ 大家晚安，做个好梦！")
 
             # 向所有配置的群组发送晚安问候
@@ -297,7 +308,8 @@ def create_activity_checker(
         groups: Optional[List[int]] = None,
         message_counter_getter: Optional[Callable] = None,
         message_counter_resetter: Optional[Callable] = None,
-        llm_chat_func: Optional[Callable] = None
+        llm_chat_func: Optional[Callable] = None,
+        bot_qq: Optional[int] = None,
 ) -> ActivityChecker:
     """
     创建并配置活动检查器的工厂函数
@@ -308,6 +320,7 @@ def create_activity_checker(
         message_counter_getter: 获取消息计数器的函数
         message_counter_resetter: 重置消息计数器的函数
         llm_chat_func: LLM聊天函数
+        bot_qq: 本机器人 QQ 号（暖场/晚安调用 chat_agent 时的 user_id）
 
     返回:
         配置好的 ActivityChecker 实例
@@ -324,6 +337,8 @@ def create_activity_checker(
         checker.set_message_counter_resetter(message_counter_resetter)
     if llm_chat_func:
         checker.set_llm_chat_func(llm_chat_func)
+    if bot_qq is not None:
+        checker.set_bot_qq(bot_qq)
 
     return checker
 

@@ -21,6 +21,11 @@ with open(
 ) as _f:
     _bot_cfg = json.load(_f)
 
+if _bot_cfg.get("bot_qq") is None:
+    raise ValueError("config.json 缺少必填项 bot_qq（本机器人 QQ 号，用于识别群聊 @）")
+BOT_QQ = int(_bot_cfg["bot_qq"])
+AT_BOT_PREFIX = f"@{BOT_QQ}"
+
 WS_URL = _bot_cfg["ws_url"]
 ACCESS_TOKEN = _bot_cfg["access_token"]
 chat_group_ls = [int(x) for x in _bot_cfg["chat_group_ids"]]
@@ -147,14 +152,16 @@ async def handle_message(data: dict):
             message_counter += 1
         if group_id not in chat_group_ls:
             return
-        at_bot = '@3806541446' in message_content
+        at_bot = AT_BOT_PREFIX in message_content
         if _group_mode == "listen" and not at_bot:
             add_to_history(user_id, message_content, "user", group_id=group_id)
             return
         if not at_bot:
             return
         try:
-            clean_content = re.sub(r"^@3806541446\s*", "", message_content).strip()
+            clean_content = re.sub(
+                rf"^{re.escape(AT_BOT_PREFIX)}\s*", "", message_content
+            ).strip()
             qby_cmd = parse_group_qby_command(clean_content)
             if qby_cmd:
                 if qby_cmd == "on":
@@ -285,7 +292,8 @@ if __name__ == "__main__":
         groups=check_activity_level_group,
         message_counter_getter=get_message_counter,
         message_counter_resetter=reset_message_counter,
-        llm_chat_func=chat_agent
+        llm_chat_func=chat_agent,
+        bot_qq=BOT_QQ,
     )
     # 启动定时任务（非阻塞）
     checker.start()

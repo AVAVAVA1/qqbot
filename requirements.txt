@@ -1,0 +1,21 @@
+# NapCat WebSocket、日志
+websockets>=12.0
+loguru>=0.7.0
+
+# 配置与 HTTP
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# LangChain / LangGraph 对话与 Tavily 联网
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+tavily-python>=0.5.0
+
+# Pixiv / 浏览器（无头 Chrome + 驱动）
+selenium>=4.0.0
+webdriver-manager>=4.0.0
+beautifulsoup4>=4.12.0
+
+# 群活跃暖场定时
+APScheduler>=3.10.0

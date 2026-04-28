@@ -26,7 +26,6 @@ src/cookie.json
 data/
 pic/
 source/
-project.md
 # team_member：仅保留 qby.md 入库，其它成员/本地说明忽略
 team_member/*
 !team_member/qby.md

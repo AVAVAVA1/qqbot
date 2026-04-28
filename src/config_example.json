@@ -1,6 +1,7 @@
 {
   "ws_url": "",
   "access_token": "",
+  "bot_qq": 123456789,
   "chat_group_ids": [],
   "check_activity_level_group_ids": [],
   "mode": "listen",

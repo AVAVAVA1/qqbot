@@ -20,7 +20,7 @@
 ### 群聊
 
 - 只有 **`config.json` 里 `chat_group_ids` 包含的群**里，机器人才会收消息并可能回复；其它群会忽略。
-- 需要本机器人**生成回复**时，消息中必须带 **@ 本机器人**（与当前机器人 QQ 号一致）。代码里用字符串 `@3806541446` 判断；若你换绑了机器人 QQ，应在 `src/main.py` 中全局替换为新的 `@你的机器人号`。
+- 需要本机器人**生成回复**时，消息中必须带 **@ 本机器人**（与 `config.json` 中的 `bot_qq` 一致）。程序会用 `@` + `bot_qq` 判断是否 @ 机器人并剥离前缀。
 - 发消息时**先 @ 再写内容**。程序会剥掉**开头那一次 @**，把余下部分当作用户输入。例如：  
   `@机器人 今天天气怎么样` → 模型看到的是 `今天天气怎么样`。
 - **`mode`（`config.json`）**  
@@ -57,7 +57,7 @@
 |------|------------|
 | **连接与入站** | 通过 `config.json` 中的 `ws_url`、`access_token` 连接 NapCat；处理私聊与群聊事件。 |
 | **大模型对话** | 使用 LangChain `init_chat_model` 与可配置的 Base URL / 模型名（见环境变量）生成回复。 |
-| **群聊触发** | 群内需 **@ 机器人**（项目内为 `@3806541446`）才走对话与指令；可配置仅响应指定群。 |
+| **群聊触发** | 群内需 **@ 机器人**（`config.json` 的 `bot_qq`）才走对话与指令；可配置仅响应指定群。 |
 | **群聊模式** | `config.json` 的 `mode`：`reply` 仅 @ 时记录并回复；`listen` 全群记录、仅 @ 时回复。`message_num` 控制群上下文注入条数。 |
 | **联网搜索** | 由 LLM 判断是否需要搜索，在 **Tavily** 中检索，结果注入提示词（需 `Tavily_APIKEY`）。 |
 | **Pixiv 配图** | 消息以 **`/pixiv`** 开头时解析参数并下载配图（Selenium + 本机 Chrome）；与闲聊/联网意图分离；正文仍走大模型。 |
@@ -83,6 +83,7 @@
 |------|------|
 | `ws_url` | NapCat 正向 WebSocket 地址，例如 `ws://127.0.0.1:端口号/路径`（以你的 NapCat 配置为准）。 |
 | `access_token` | 与 NapCat 里为 WebSocket 配置的 Token 一致。 |
+| `bot_qq` | **必填。** 本机器人登录的 QQ 号（数字）；用于识别「群消息里是否 @ 了本机器人」、去掉开头的 `@`。 |
 | `chat_group_ids` | 需要机器人响应的**群号**列表；仅在这些群内处理 @ 与（按模式的）历史。 |
 | `check_activity_level_group_ids` | 需要参与**活跃暖场/计数**的群号列表。 |
 | `mode` | `reply` 或 `listen`，含义见上表。 |
@@ -150,11 +151,11 @@ Pixiv 相关下载依赖浏览器请求头。将 **`src/cookie_example.json`** �
    - Python 3.10+（建议）。  
    - 安装 [Google Chrome](https://www.google.com/chrome/)（Pixiv 使用无头 Chrome + ChromeDriver，首次运行会自动拉取驱动）。
 
-2. **安装依赖**（项目根目录若暂无 `requirements.txt` 时，可先行安装主依赖）  
+2. **安装依赖**（在项目根目录执行）  
    ```bash
-   pip install websockets loguru python-dotenv langchain langgraph tavily-python selenium webdriver-manager
+   pip install -r requirements.txt
    ```
-   若还缺其它包，以运行 `python main.py` 的导入报错为准补装。
+   `requirements.txt` 与 `src` 中的第三方库 import 对应；若遇版本冲突，以能成功运行 `python main.py` 为准。
 
 3. **配置 NapCat**  
    在 NapCat 中配置正向 WebSocket 与 Token，将 `ws_url`、`access_token` 写入 `src/config.json`，并把需要接入的群号写入 `chat_group_ids`。
