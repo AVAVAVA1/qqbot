@@ -12,6 +12,8 @@ from llm_chat import (
     enable_qby_mode,
     disable_qby_mode,
     set_group_chat_config,
+    try_handle_group_character_commands,
+    init_character_state_from_bot_config,
 )
 from check_activity_level import create_activity_checker
 import const
@@ -36,27 +38,24 @@ _group_mode = set_group_chat_config(
     _bot_cfg.get("mode"),
     _bot_cfg.get("message_num"),
 )
-"""
-# 发送私聊消息
-await api.send_private_msg(user_id=12345678, message="你好")
+init_character_state_from_bot_config(_bot_cfg)
 
-# 发送群消息
-await api.send_group_msg(group_id=12345678, message="大家好")
+_COMMAND_MD_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "command.md")
+)
 
-# 发送复合消息（@ + 文本）
-message = [
-    MessageSegment.at(12345678),
-    MessageSegment.text(" 你好")
-]
-await api.send_group_msg(group_id=12345678, message=message)
 
-# 回复消息
-message = [
-    MessageSegment.reply(message_id),
-    MessageSegment.text("收到")
-]
-await api.send_group_msg(group_id=12345678, message=message)
-"""
+def load_command_help_text() -> str:
+    """读取项目根目录 command.md，供 /command 指令回复。"""
+    try:
+        with open(_COMMAND_MD_PATH, encoding="utf-8") as f:
+            t = f.read().strip()
+            return t if t else "command.md 存在但内容为空，请编辑后再试。"
+    except OSError as e:
+        logger.warning(f"读取 command.md 失败: {e}")
+        return (
+            "未找到或无法读取「command.md」（应在项目根目录与 README 同级）。"
+        )
 
 
 message_counter = 0
@@ -66,6 +65,7 @@ update_log = {
     '2026/3/21': {'time': '2026/3/21', 'content':'1.优化了pixiv download 模块，使下载数与请求数相匹配'},
     '2026/4/25': {'time': '2026/4/25', 'content':'1.新增了qby模式，可以在群聊中使用qby来回答用户的问题.使用/qby开启,/qby quit关闭模式 2.优化了langgraph pipeline，减少了api的无效访问，更易于维护'},
     '2026/4/26': {'time': '2026/4/26', 'content':'1.新增功能：对每名群u的发言进行蒸馏'},
+    '2026/5/2': {'time': '2026/5/2', 'content':'1.新增人物卡扮演（SillyTavern 等），见 README。2.新增 /command，回复项目根 command.md 中的指令说明。'},
 }
 
 
@@ -127,6 +127,12 @@ async def handle_message(data: dict):
 
     if message_type == "private":
         logger.info(f"[私聊] 用户 {user_id}: {message_content}")
+        if re.fullmatch(r"/command\s*", (message_content or "").strip(), re.IGNORECASE):
+            help_text = load_command_help_text()
+            await api.send_private_msg(user_id=user_id, message=help_text)
+            add_to_history(user_id, message_content.strip(), "user")
+            add_to_history(user_id, help_text, "assistant")
+            return
         # 私聊处理
         result = await chat_agent(message_content, user_id=user_id)
 
@@ -191,8 +197,21 @@ async def handle_message(data: dict):
                     user_id, result["response"], "assistant", group_id=group_id
                 )
                 return
-            # 发送更新日志
-            if clean_content == '/log':
+            char_cmd_reply = try_handle_group_character_commands(clean_content)
+            if char_cmd_reply is not None:
+                result = {"response": char_cmd_reply}
+                await api.send_group_msg(group_id=group_id, message=result["response"])
+                add_to_history(
+                    user_id, clean_content, "user", group_id=group_id
+                )
+                add_to_history(
+                    user_id, result["response"], "assistant", group_id=group_id
+                )
+                return
+            if re.fullmatch(r"/command\s*", clean_content, re.IGNORECASE):
+                help_text = load_command_help_text()
+                result = {"response": help_text}
+            elif clean_content == '/log':
                 update_data = ''
                 for update_time in update_log.keys():
                     update_data += f'更新时间：{update_log[update_time].get('time')}\n更新内容：{update_log[update_time].get('content')}\n'

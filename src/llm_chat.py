@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph, END
 from langchain.chat_models import init_chat_model
 from loguru import logger
 import const
+import character_cards
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -86,6 +87,14 @@ TEAM_MEMBER_FOLDER = os.path.join(os.path.dirname(DATA_FOLDER), "team_member")
 
 os.makedirs(DATA_FOLDER, exist_ok=True)
 os.makedirs(TEAM_MEMBER_FOLDER, exist_ok=True)
+os.makedirs(character_cards.CHAR_PIC_DIR, exist_ok=True)
+os.makedirs(character_cards.CHAR_MD_DIR, exist_ok=True)
+
+ACTIVE_CHARACTER_JSON = os.path.join(DATA_FOLDER, "active_character.json")
+_active_char_md_name: Optional[str] = None
+_active_char_text: str = ""
+# config.json 的 default_character（及拼写误写 defult_character）；`/change default` 也回到此处
+_config_default_character_raw: str = ""
 
 MAX_HISTORY_PER_USER = const.max_messages
 
@@ -276,9 +285,195 @@ def get_system_prompt(prompt_type: str) -> str:
     return system_prompts.get(prompt_type, "")
 
 
+def _active_character_block() -> str:
+    t = (_active_char_text or "").strip()
+    if not t:
+        return ""
+    return (
+        "\n\n【人物卡人格】（表现与口吻以此为补充；原则与边界以上文系统提示为准）\n\n"
+        + t
+    )
+
+
 def _normal_mode_prompt(ctx: Dict[str, Any]) -> str:
-    """普通模式唯一入口：只用 oguri 模板 + 模式锁，不引用 qby_system_prompt 与 skill。"""
-    return system_prompts["chat"].format(**ctx) + _NORMAL_MODE_LOCK
+    """普通模式：.env system_prompt 模板 + 可选人物卡 md + 模式锁。"""
+    return (
+        system_prompts["chat"].format(**ctx)
+        + _active_character_block()
+        + _NORMAL_MODE_LOCK
+    )
+
+
+def _normalize_md_basename(raw: str) -> str:
+    a = (raw or "").strip()
+    if not a:
+        return ""
+    if "/" in a or "\\" in a:
+        return ""
+    base = os.path.basename(a)
+    if not base.lower().endswith(".md"):
+        base = f"{base}.md"
+    return base
+
+
+def _try_load_md_into_active(md_basename: str) -> bool:
+    """将 character/char_md 下已有文件读入内存。失败则清空内存并返回 False。"""
+    global _active_char_md_name, _active_char_text
+    _active_char_md_name = None
+    _active_char_text = ""
+    if not md_basename:
+        return False
+    path = os.path.join(character_cards.CHAR_MD_DIR, md_basename)
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            _active_char_text = f.read()
+        _active_char_md_name = md_basename
+        return True
+    except Exception as e:
+        logger.error(f"读取人物卡 md 失败: {e}")
+        _active_char_md_name = None
+        _active_char_text = ""
+        return False
+
+
+def _try_load_persisted_active_character() -> bool:
+    """若存在 data/active_character.json 且文件有效则加载。返回是否已加载。"""
+    global _active_char_md_name, _active_char_text
+    _active_char_md_name = None
+    _active_char_text = ""
+    if not os.path.isfile(ACTIVE_CHARACTER_JSON):
+        return False
+    try:
+        with open(ACTIVE_CHARACTER_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+        name = data.get("active_md") or data.get("filename")
+        if not name or not isinstance(name, str):
+            return False
+        safe = os.path.basename(name.strip())
+        if not safe.lower().endswith(".md"):
+            safe = f"{safe}.md"
+        path = os.path.join(character_cards.CHAR_MD_DIR, safe)
+        if not os.path.isfile(path):
+            logger.warning(f"持久化的人物卡文件不存在，忽略: {safe}")
+            return False
+        with open(path, encoding="utf-8") as f:
+            _active_char_text = f.read()
+        _active_char_md_name = safe
+        logger.info(f"已加载人物卡（持久化）: {safe}")
+        return True
+    except Exception as e:
+        logger.error(f"加载 active_character 失败: {e}")
+        return False
+
+
+def init_character_state_from_bot_config(cfg: Dict[str, Any]) -> None:
+    """
+    在 main 读完 config.json 后调用一次。
+    优先 data/active_character.json；否则使用 cfg 的 default_character（空则不使用人物卡）。
+    兼容键名拼写错误 defult_character。
+    """
+    global _config_default_character_raw
+    dc = cfg.get("default_character") or cfg.get("defult_character")
+    if isinstance(dc, str):
+        _config_default_character_raw = dc.strip()
+    else:
+        _config_default_character_raw = ""
+    if _try_load_persisted_active_character():
+        return
+    base = _normalize_md_basename(_config_default_character_raw)
+    if not base:
+        logger.info("人物卡：无持久化且 default_character 为空，未加载人物卡")
+        return
+    if _try_load_md_into_active(base):
+        logger.info(f"人物卡：已应用 config 默认 {base}")
+    else:
+        logger.warning(f"config default_character 指定的文件不存在: {base}")
+
+
+def _persist_active_character() -> None:
+    if _active_char_md_name:
+        try:
+            with open(ACTIVE_CHARACTER_JSON, "w", encoding="utf-8") as f:
+                json.dump({"active_md": _active_char_md_name}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存 active_character 失败: {e}")
+    else:
+        if os.path.isfile(ACTIVE_CHARACTER_JSON):
+            try:
+                os.remove(ACTIVE_CHARACTER_JSON)
+            except OSError as e:
+                logger.warning(f"删除 active_character.json 失败: {e}")
+
+
+def set_active_character_from_arg(arg: str) -> str:
+    """群聊 /change 使用；返回发给用户的说明。"""
+    global _active_char_md_name, _active_char_text
+    a = (arg or "").strip()
+    if not a:
+        return (
+            "用法：@机器人 /change 文件名.md（可省略扩展名；**必须带 /**）；"
+            "/change default 恢复为 config.json 的 default_character（空则不加人物卡）。"
+        )
+    if a.lower() == "default":
+        _active_char_md_name = None
+        _active_char_text = ""
+        _persist_active_character()
+        base = _normalize_md_basename(_config_default_character_raw)
+        if base and _try_load_md_into_active(base):
+            _persist_active_character()
+            return (
+                f"已恢复默认人物卡：{base}（来自 config.json 的 default_character）。"
+            )
+        return (
+            "已恢复为默认：当前未使用人物卡（config 中 default_character 为空或文件不存在）。"
+        )
+    if "/" in a or "\\" in a:
+        return "请只提供文件名，不要带路径。"
+    base = os.path.basename(a)
+    if not base.lower().endswith(".md"):
+        base = f"{base}.md"
+    path = os.path.join(character_cards.CHAR_MD_DIR, base)
+    if not os.path.isfile(path):
+        return f"未找到人物卡：{base}。先发 /char list 查看列表。"
+    try:
+        with open(path, encoding="utf-8") as f:
+            _active_char_text = f.read()
+        _active_char_md_name = base
+        _persist_active_character()
+        return f"已切换人物卡：{base}（普通模式下与 .env system_prompt 叠用；QBY 模式不变）。"
+    except Exception as e:
+        logger.error(f"读取人物卡失败: {e}")
+        return "读取人物卡失败，请稍后重试。"
+
+
+def format_char_md_list_message() -> str:
+    names = character_cards.list_md_filenames()
+    if not names:
+        return (
+            "当前没有人物卡 Markdown。可将 SillyTavern PNG 放入 character/char_pic 后发 "
+            "@机器人 /parse pic。"
+        )
+    return "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names))
+
+
+def try_handle_group_character_commands(clean_content: str) -> Optional[str]:
+    """
+    解析群聊 @ 后的 /parse pic、/char list、/change。
+    若命中则返回回复正文；否则返回 None。
+    """
+    raw = (clean_content or "").strip()
+    if not raw:
+        return None
+    if re.fullmatch(r"/parse\s+pic\s*", raw, re.IGNORECASE):
+        return character_cards.run_parse_missing_report()
+    if re.fullmatch(r"/char\s+list\s*", raw, re.IGNORECASE):
+        return format_char_md_list_message()
+    m = re.fullmatch(r"/change\s+(\S+)\s*", raw, re.IGNORECASE)
+    if m:
+        return set_active_character_from_arg(m.group(1))
+    return None
 
 
 def _normalize_bot_reply_text(text: str) -> str:
@@ -746,9 +941,8 @@ async def analyze_search_need(user_input: str) -> SearchParams:
         content = response.content.strip()
         logger.info(f"模型搜索分析结果: {content}")
 
-        # 尝试解析JSON
-        import json
-        # 清理可能的markdown代码块
+        # 尝试解析JSON（勿在函数内再 import json，否则 except json.JSONDecodeError
+        # 会在 import 执行前把 json 视为未赋值的局部变量）
         if content.startswith("```json"):
             content = content[7:]
         if content.startswith("```"):
@@ -1147,6 +1341,7 @@ async def generate_node(state: AgentState) -> Dict[str, Any]:
                 simple_prompt = (
                     system_prompts["chat"].format(**ctx_audit)
                     + "\n\n【审核降级】回复尽量简短。"
+                    + _active_character_block()
                     + _NORMAL_MODE_LOCK
                 )
             try:
@@ -1276,3 +1471,5 @@ async def chat_agent(
         "memory_saved": result.get("memory_saved", False),
         "pixiv_images": result.get("pixiv_images", [])
     }
+
+

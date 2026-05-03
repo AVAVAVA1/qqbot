@@ -4,7 +4,8 @@
 
 ## 入口与依赖
 
-- **`src/main.py`**：连接 NapCat WebSocket，处理私聊/群聊；群内消息中出现 **`@` + `config.json` 的 `bot_qq`** 时处理指令与对话。
+- **`src/main.py`**：连接 NapCat WebSocket，处理私聊/群聊；群内消息中出现 **`@` + `config.json` 的 `bot_qq`** 时处理指令与对话。**`/command`**（群聊需 @；私聊整段为 `/command`）读取项目根 **`command.md`** 作为指令说明回复。
+- **`command.md`**（项目根，与 `README.md` 同级）：显式指令列表与行为说明；**与代码中分支同步维护**，由 `/command` 输出。
 - **`src/llm_chat.py`**：大模型对话管线（LangGraph）、搜索、Pixiv、记忆与偏好等。
 
 ## LangGraph 对话管线
@@ -42,15 +43,16 @@ context → pixiv → search_plan → [需要联网?] ──是──→ tavily 
 
 两种模式**互斥**，不在同一次 `llm.ainvoke` 里混用 `system_prompt` 与 `qby_system_prompt`：
 
-- **普通模式（`qby_mode_active == False`）**：整段提示仅来自 **`.env` 的 `system_prompt`**（加载为 `const.chat_system_prompt`，缓存在 `system_prompts["chat"]`；空则用代码内 `_DEFAULT_CHAT_SYSTEM_PROMPT`）。末尾追加 **`_NORMAL_MODE_LOCK`**，避免历史里曾出现 qby 而串台。内容审核降级时同样用 **`system_prompts["chat"].format(...)`** 格式化，不再使用硬编码的短 oguri 段。
+- **普通模式（`qby_mode_active == False`）**：主模板来自 **`.env` 的 `system_prompt`**（加载为 `const.chat_system_prompt`，缓存在 `system_prompts["chat"]`；空则用代码内 `_DEFAULT_CHAT_SYSTEM_PROMPT`）。若已通过 **`/change`** 选用人物卡，则在格式化后的模板后追加 **`character/char_md` 中对应正文**（「人物卡人格」区块）。末尾追加 **`_NORMAL_MODE_LOCK`**。内容审核降级时同样在格式化后追加当前人物卡与模式锁。
 - **QBY 模式**：仅用 **`const.qby_system_prompt`** + **`_QBY_ROLE_RULES`** + **`_QBY_CONTEXT_TEMPLATE`** + 可选 **`team_member/qby.md`**（口癖轻量备忘，**非**剧本；唯一加载路径）。**不**读取 `system_prompts["chat"]` / oguri 模板。
 
 开关：全局 **`qby_mode_active`**，默认 `const.qby_model_default`。群聊在 **`@` + `bot_qq`（来自 `config.json`）** 后（固定语义，**不**翻转）：
 
 - **`/qby`** 或 **`qby`**：**仅开启** QBY（已在开则提示无需重复）；
 - **`/qby quit`**：**仅关闭** QBY（兼容 **`qby quit`**）；已关则提示当前不在 QBY。
+- **`/parse pic`**、**`/char list`**、**`/change`**：人物卡相关，见下文「人物卡」。
 
-解析见 **`llm_chat.parse_group_qby_command`**（大小写不敏感，首尾可空白）。
+解析见 **`llm_chat.parse_group_qby_command`**（QBY，大小写不敏感，首尾可空白）；人物卡见 **`try_handle_group_character_commands`**。
 
 ## 数据与生成文件（项目根目录 `data/`）
 
@@ -60,6 +62,21 @@ context → pixiv → search_plan → [需要联网?] ──是──→ tavily 
 | `data/user_preferences.json` | 话题/表情偏好等 |
 | `data/permanent_memories.json` | 「记住」类永久记忆 |
 | `data/user_personality.json` | 聊天超限清理时的性格总结归档 |
+| `data/active_character.json` | 当前选用的人物卡文件名（`character/char_md/*.md`）；**存在时优先于** `config.json` 的 `default_character`。`/change default` 会删除此文件并按 `default_character` 重新加载。 |
+
+## 人物卡（SillyTavern PNG → Markdown）
+
+- **源文件**：`char_pic` 下 **PNG**（须为 SillyTavern 等导出的**内嵌 chara** 角色卡，普通立绘 PNG 无法解析）、同名的 **.json** 角色数据；**JPG / WebP 等仅立绘时可配同名 .json** 一并解析（WebP 常见于 Pixiv `master1200` 导出）。
+- **离线解析**：在 `src` 下执行 `python character_cards.py`；可为 **内嵌 chara 的 PNG**、**`.json` 角色文件**生成 md；纯立绘 PNG、仅 JPG/WebP 需 **同名 `.json`**（从 SillyTavern 等导出）。
+- **`config.json` → `default_character`**（可选）：仅含 **`character/char_md` 下的文件名**（不要路径；可省略 `.md`）。**留空**表示启动时不默认加载人物卡。启动时若已有 **`data/active_character.json`**（例如曾用 `/change` 选过卡），则**以持久化为准**，忽略该项直至你发 **`/change default`**。
+  - 兼容历史拼写错误键名 **`defult_character`**。
+- **仅群聊、需 `@` 机器人**（与 `/qby`、`/log` 同类）。**`/parse pic`、`/char list`、`/change` 必须以 `/` 开头**；写成 `change`、`parse pic` 等不会命中。
+  - **`/parse pic`**：增量解析（只处理缺 md 的图片），并回复简要报告。
+  - **`/char list`**：列出 `char_md` 下的 `.md` 文件名（编号列表）。
+  - **`/change 文件名`**：切换当前人物卡（可省略 `.md`）；**`/change default`**：去掉持久化并按 **`default_character`** 恢复（空则不加人物卡）。
+- **与普通模式**：普通模式下 LLM 提示词为 **`.env` 的 `system_prompt` 模板（原则）** + **当前人物卡正文（个性）** + 模式锁；**QBY 模式**仍仅用 `qby_system_prompt` + `qby.md`，**不**叠人物卡。
+
+解析逻辑见 **`src/character_cards.py`**；选用状态见 **`main.init_character_state_from_bot_config`** 与 **`llm_chat.try_handle_group_character_commands`**。
 
 ## 群成员蒸馏档案（`team_member/`）
 

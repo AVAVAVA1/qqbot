@@ -28,7 +28,18 @@ if api_key and not api_key.strip().lower().startswith("sk-") and os.getenv(api_k
     api_key = os.getenv(api_key)
 temperature = _env_strip("TEMPERATURE")
 
-max_messages = os.getenv('MAX_MESSAGES') or 100
+
+def _env_int(name: str, default: int) -> int:
+    v = os.getenv(name)
+    if v is None or not str(v).strip():
+        return default
+    try:
+        return int(str(v).strip(), 10)
+    except ValueError:
+        return default
+
+
+max_messages = _env_int("MAX_MESSAGES", 100)
 
 def _env_bool(name: str, default: str = "false") -> bool:
     v = (os.getenv(name) or default).strip().lower()

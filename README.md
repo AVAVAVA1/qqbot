@@ -29,7 +29,7 @@
 
 ### 群聊与私聊的差异（与指令有关）
 
-- **`/qby`、`/qby quit`、与恰好为 `/log` 的更新日志**只在**群聊里**按固定规则解析；私聊发这些内容会当作普通话交给大模型。  
+- **`/qby`、`/qby quit`、`/command`、`/parse pic`、`/char list`、`/change`、与恰好为 `/log` 的更新日志**只在**群聊里**按固定规则解析；私聊发这些内容会当作普通话交给大模型，**例外：`/command` 私聊也可用**（整段恰好为 `/command`）。其中 **`/parse pic`、`/char list`、`/change` 必须带前导 `/`**（不要发成 `change`、`parse pic`）。  
 - **`/pixiv` 在私聊与群聊**均可使用；群聊里请写成 `@机器人 /pixiv …`，保证去掉 @ 后仍以 `/pixiv` 开头。
 
 ---
@@ -40,12 +40,16 @@
 
 | 命令 | 场景 | 行为说明 |
 |------|------|----------|
+| `/command` | **群聊与私聊** | **群聊**去掉 @ 后整段恰好为 `/command`（`fullmatch`）。**私聊**整段恰好为 `/command`。读取并发送项目根目录 **`command.md`** 的全文，不调用大模型；新增指令时请同步维护该文件。 |
 | `/log` | 仅**群聊** | 去掉 @ 后，**整段内容恰好等于** `/log` 时，返回 `main.py` 里 `update_log` 拼出的**更新说明文本**，不调用大模型。多一个字都不会命中。 |
 | `/qby` 或 `qby` | 仅**群聊** | 去掉 @ 后，**整段**仅含「开启 QBY」指令（`fullmatch`），**只负责开启** QBY 模式；已开启时会提示可发 `/qby quit` 关闭。`qby` 与带斜杠的 `/qby` 等效。 |
 | `/qby quit` 或 `qby quit` | 仅**群聊** | 同上，**整段**匹配关闭 QBY。 |
+| `/parse pic` | 仅**群聊** | 将 `char_pic` 中缺 `.md` 的条目录入 `char_md`：**含 chara 的 PNG**、或 **同名 `.json`**；纯立绘 PNG / 仅 JPG 需自行放入与 stem 同名的角色 **JSON**（详见 `project.md`）。 |
+| `/char list` | 仅**群聊** | 列出当前 `character/char_md` 下的 `.md` 文件名（编号列表）。 |
+| `/change …` | 仅**群聊** | **`/change 文件名`** 切换普通模式叠用的人物卡（可省略 `.md`）；**`/change default`** 清除持久化并恢复为 **`config.json` 的 `default_character`**（该项为空则不加人物卡）。 |
 | `/pixiv` … | **私聊与群聊** | 在**去掉 @ 之后**（群聊）或**整段消息**（私聊），**以** `/pixiv` 开头（不区分大小写），后面可接日/周/月榜、作品 id、标签等，见 `project.md`；会走 Pixiv 下载，**不会**与 Tavily 联网搜索混用，其余文字仍由大模型组织回复。 |
 
-**注意：** QBY 与 `/log` 的解析要求「去掉 @ 以后」**只有命令本身**（可带 `fullmatch` 允许的空白），不能在同一条里写成 `@机器人 /qby 再帮我查xxx`，否则会整句交给大模型。Pixiv 则允许 `/pixiv` 后接任意说明文字。
+**注意：** QBY、`/log` 与人物卡相关指令（`/parse pic`、`/char list`、`/change`）的解析要求「去掉 @ 以后」**只有命令本身**（`fullmatch` 允许的空白除外），不能在同一条里写成 `@机器人 /parse pic 随便聊聊」，否则会整句交给大模型。**人物卡三条必须以 `/` 开头**（`/parse pic`、`/char list`、`/change`），写成 `change xxx` 不会命中。**`/command` 在私聊也可使用**（整段仅为 `/command`）。Pixiv 则允许 `/pixiv` 后接任意说明文字。
 
 ---
 
@@ -66,6 +70,7 @@
 | **用户偏好** | 话题、表情等偏好存 `data/user_preferences.json`，用于丰富提示。 |
 | **性格 / 群友蒸馏** | 历史触顶时 LLM 总结并写入 `data/user_personality.json` 与 `team_member/{user_id}.md`。 |
 | **QBY 模式** | 群聊 @ 后发送 **`/qby`** 或 `qby` 开启、**`/qby quit`** 或 `qby quit` 关闭；使用独立人设与 `team_member/qby.md` 口癖备忘（与「普通模式」二选一）。 |
+| **人物卡** | PNG / 同名 JSON / JPG 立绘配 JSON 放 `character/char_pic`，**`/parse pic`** 生成 `character/char_md`；**`/char list`**、**`/change`** 选用；**仅普通模式**与 `.env` 的 `system_prompt` 叠用，详见 `project.md`。 |
 | **群聊指令** | 见上文 **「已配置的命令」**（如 **`/log`** 推送 `update_log`）。 |
 | **表情与随机表情** | 按关键词从本地表情库选图；另有概率随机发表情（见 `finalize` 与主流程返回）。 |
 | **活跃暖场** | `check_activity_level_group_ids` 配置的群在消息数达到配置时会触发 `check_activity_level` 中的暖场/互动逻辑（与 `chat_agent` 衔接）。 |
@@ -88,6 +93,7 @@
 | `check_activity_level_group_ids` | 需要参与**活跃暖场/计数**的群号列表。 |
 | `mode` | `reply` 或 `listen`，含义见上表。 |
 | `message_num` | 群聊拼进上下文的**消息条数**（会参与 `llm_chat` 中的 `CONTEXT_MESSAGE_NUM` 等逻辑，见 `set_group_chat_config`）。 |
+| `default_character` | **可选。** `character/char_md` 下的文件名（可省略 `.md`）；进程启动时若**没有** `data/active_character.json` 则加载该人物卡。**空字符串**表示不默认加载人物卡。误写为 `defult_character` 时也会被读取。 |
 
 ---
 

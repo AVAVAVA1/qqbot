@@ -29,7 +29,12 @@ source/
 # team_member：仅保留 qby.md 入库，其它成员/本地说明忽略
 team_member/*
 !team_member/qby.md
-
+character/char_pic/*
+!character/char_pic/义体医生wei1.2.png
+!character/char_pic/已读乱回DeepFake.png
+character/char_md/*
+!character/char_md/义体医生wei1.2.md
+!character/char_md/已读乱回DeepFake.md
 # 编辑器/系统
 .idea/
 .vscode/
