@@ -154,29 +154,52 @@ Pixiv 相关下载依赖浏览器请求头。将 **`src/cookie_example.json`** �
 ## Quickstart
 
 1. **环境**  
-   - Python 3.10+（建议）。  
+   - Python 3.10+（建议）；安装后确认终端里 `python --version` 可用。  
    - 安装 [Google Chrome](https://www.google.com/chrome/)（Pixiv 使用无头 Chrome + ChromeDriver，首次运行会自动拉取驱动）。
 
-2. **安装依赖**（在项目根目录执行）  
+2. **克隆或解压项目后，进入项目根目录**（含 `src`、`requirements.txt`、`run_qqbot.bat` 的那一层）。
+
+3. **（推荐）创建虚拟环境**（在项目根目录执行）
+
+   ```powershell
+   python -m venv .venv
+   ```
+
+   - **PowerShell** 激活（执行策略若拦截，可先 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`）：  
+     ```powershell
+     .\.venv\Scripts\Activate.ps1
+     ```
+   - **命令提示符 cmd**：  
+     ```bat
+     .venv\Scripts\activate.bat
+     ```
+
+   激活后提示符前会出现 `(.venv)`；此后 `pip`、`python` 都指向该环境。若不使用虚拟环境，也可跳过本步，`run_qqbot.bat` 会回退到系统 PATH 里的 `python`。
+
+4. **安装依赖**（建议在已激活的 `.venv` 下、仍在项目根目录执行）
+
    ```bash
    pip install -r requirements.txt
    ```
-   `requirements.txt` 与 `src` 中的第三方库 import 对应；若遇版本冲突，以能成功运行 `python main.py` 为准。
 
-3. **配置 NapCat**  
-   在 NapCat 中配置正向 WebSocket 与 Token，将 `ws_url`、`access_token` 写入 `src/config.json`，并把需要接入的群号写入 `chat_group_ids`。
+   `requirements.txt` 与 `src` 中的第三方库 import 对应；若遇版本冲突，以能成功启动机器人为准。
 
-4. **配置模型与 Key**  
-   新建 `src/.env`，至少配置 `API_KEY`、`MODEL_NAME`、`MODEL_PROVIDER`、`BASE_URL`；需要联网时配置 `Tavily_APIKEY`；需要 QBY 默认开启或人设时配置 `qby_model`、`QBY_SYSTEM_PROMPT`。
+5. **配置文件**（详见上文各节，此处为最小清单）
 
-5. **（可选）Pixiv**  
-   复制并填写 `src/cookie.json`；详见上文。
+   - 从 `src/config_example.json` 复制为 `src/config.json`，填写 NapCat 的 `ws_url`、`access_token`、`bot_qq`、`chat_group_ids` 等。  
+   - 新建 `src/.env`，至少配置 `API_KEY`、`MODEL_NAME`、`MODEL_PROVIDER`、`BASE_URL`；需要联网时配置 `Tavily_APIKEY`；需要 QBY 默认开启或人设时配置 `qby_model`、`QBY_SYSTEM_PROMPT`。  
+   - （可选）Pixiv：复制并填写 `src/cookie.json`。
 
-6. **运行**（在 `src` 目录下）  
+6. **启动**  
+   **直接双击或在资源管理器中运行项目根目录下的 `run_qqbot.bat`。**  
+   脚本会切换到项目根目录，若存在 `.venv\Scripts\python.exe` 则用该解释器运行 `src\main.py`，否则使用系统 `python`。
+
+   等价手动命令（在项目根目录、且已激活 `.venv` 时）：
+
    ```bash
-   cd src
-   python main.py
+   python src\main.py
    ```
+
    看到日志中 WebSocket 连接成功即表示与 NapCat 已连通。之后按上文 **「如何与机器人对话」** 在私聊或群内 @ 后测试；命令列表见 **「已配置的命令」**。
 
 更完整的协议字段、数据文件与记忆/历史说明，请继续阅读 [`project.md`](project.md)。
