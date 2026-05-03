@@ -174,7 +174,7 @@ Pixiv 相关下载依赖浏览器请求头。将 **`src/cookie_example.json`** �
      .venv\Scripts\activate.bat
      ```
 
-   激活后提示符前会出现 `(.venv)`；此后 `pip`、`python` 都指向该环境。若不使用虚拟环境，也可跳过本步，`run_qqbot.bat` 会回退到系统 PATH 里的 `python`。
+   激活后提示符前会出现 `(.venv)`；此后 `pip`、`python` 都指向该环境。也可用 `python -m venv venv` 在项目根得到 `venv` 文件夹（与 `.venv` 二选一即可）。若不使用虚拟环境，也可跳过本步，`run_qqbot.bat` 会回退到系统 PATH 里的 `python`。
 
 4. **安装依赖**（建议在已激活的 `.venv` 下、仍在项目根目录执行）
 
@@ -192,7 +192,7 @@ Pixiv 相关下载依赖浏览器请求头。将 **`src/cookie_example.json`** �
 
 6. **启动**  
    **直接双击或在资源管理器中运行项目根目录下的 `run_qqbot.bat`。**  
-   脚本会切换到项目根目录，若存在 `.venv\Scripts\python.exe` 则用该解释器运行 `src\main.py`，否则使用系统 `python`。
+   脚本会切换到项目根目录（与 `run_qqbot.bat` 同级），按顺序查找 **`.\.venv\Scripts\python.exe`** → **`.\venv\Scripts\python.exe`** → **`.\env\Scripts\python.exe`**，找到则用该解释器运行 `src\main.py`，都找不到才使用系统 PATH 里的 `python`。请把虚拟环境建在项目根目录，否则双击启动仍会用系统 Python。
 
    等价手动命令（在项目根目录、且已激活 `.venv` 时）：
 
